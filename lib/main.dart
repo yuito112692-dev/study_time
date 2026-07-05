@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/services.dart';
-import 'package:study_time/subject.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:study_time/time.dart';
 import 'dart:async';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await loadAllData();
   runApp(const MyApp());
 }
 
@@ -195,6 +198,7 @@ class _AddScreenState extends State<AddScreen> {
                   if (text.isNotEmpty) {
                     if (!subjectData.containsKey(text)) {
                       setState(() {subjectData[text] = [];});
+                      saveSubjectData();
                       Navigator.pop(context);
                     } else {
                       dialogState(() {
@@ -284,6 +288,7 @@ class _AddScreenState extends State<AddScreen> {
                     final text = textController.text.trim();
                     if (materials != null && text.isNotEmpty && !materials.contains(text)) {
                       setState(() {materials.add(text);});
+                      saveSubjectData();
                       Navigator.pop(context);
                     } else if (text.isEmpty) {
                       dialogState(() {
@@ -507,6 +512,7 @@ class _TimerScreenState extends State<TimerScreen> {
                       setState(() {
                         studyTime.add(newRecord);
                       });
+                      saveStudyTime();
                       resetTimer();
                     },
                     child: const Text('記録を追加'),
@@ -612,8 +618,9 @@ class _TypeScreenState extends State<TypeScreen> {
                 );
                 setState(() {
                   studyTime.add(newRecord);
-                  Navigator.pop(context);
                 });
+                saveStudyTime();
+                Navigator.pop(context);
               },
               child: const Text('記録を追加'),
             )
