@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/services.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:study_time/time.dart';
 import 'dart:async';
+
+Color getSubjectColor(String subjectName) {
+  // 文字列から固有の数字（ハッシュコード）を計算する
+  int hash = subjectName.hashCode;
+  
+  // 数字をもとに、RGB（赤・緑・青）の値を0〜255の間で計算する
+  int r = (hash & 0xFF0000) >> 16;
+  int g = (hash & 0x00FF00) >> 8;
+  int b = (hash & 0x0000FF);
+  
+  // あまり暗い色や薄すぎる色にならないように、少し明るさを調整してカラーを返す
+  return Color.fromARGB(255, (r % 150) + 80, (g % 150) + 80, (b % 150) + 80);
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -342,15 +353,266 @@ class RecordScreen extends StatefulWidget {
 }
 
 class _RecordScreenState extends State<RecordScreen> {
+  int form = 1;
+  final now = DateTime.now();
+  Map<String, List<StudyRecord>> groupedRecords = {};
+  List<BarChartGroupData> barGroups = [];
 
   @override
   Widget build(BuildContext context) {
+    if (form == 1) {
+      for (int i = 6; i >= 0; i--) {
+        final targetDate = now.subtract(Duration(days: i));
+        final dateStr = "${targetDate.month}/${targetDate.day}";
+        final dayRecords = studyTime.where((r) =>
+          r.date.year == targetDate.year
+          && r.date.month == targetDate.month
+          && r.date.day == targetDate.day
+        ).toList();
+
+        double totalMinutes = 0;
+        List<BarChartRodStackItem> stackItems = [];
+
+        for (var r in dayRecords) {
+          final double duration = r.durationMinutes.toDouble();
+          stackItems.add(BarChartRodStackItem(
+            totalMinutes, totalMinutes + duration, getSubjectColor(r.material)
+          ));
+          totalMinutes += duration;
+        }
+        barGroups.add(
+          BarChartGroupData(
+            x: 6 - i,
+            barRods: [
+              BarChartRodData(
+                toY: totalMinutes,
+                width: 16,
+                borderRadius: BorderRadius.circular(4),
+                rodStackItems: stackItems,
+                color: Colors.grey.shade300,
+              )
+            ]
+          )
+        );
+      }
+    } else if (form == 2) {
+      for (int i = 4; i >= 0; i--) {
+        final targetWeekStart = now.subtract(Duration(days: now.weekday - 1 + (i * 7)));
+        final targetWeekEnd = targetWeekStart.add(const Duration(days: 6));
+    
+        // X軸のラベル用（例: "10/12~"）
+        final weekLabel = "${targetWeekStart.month}/${targetWeekStart.day}~";
+
+        // その週の期間内にあるレコードを抽出
+        final weekRecords = studyTime.where((r) {
+          final normalizedDate = DateTime(r.date.year, r.date.month, r.date.day);
+          final start = DateTime(targetWeekStart.year, targetWeekStart.month, targetWeekStart.day);
+          final end = DateTime(targetWeekEnd.year, targetWeekEnd.month, targetWeekEnd.day);
+          return (normalizedDate.isAfter(start) || normalizedDate.isAtSameMomentAs(start)) &&
+                (normalizedDate.isBefore(end) || normalizedDate.isAtSameMomentAs(end));
+        }).toList();
+
+        // 教科ごとに今週の合計時間を集計して積み上げグラフを作る
+        Map<String, double> subjectMinutesMap = {};
+        for (var r in weekRecords) {
+          subjectMinutesMap[r.subject] = (subjectMinutesMap[r.subject] ?? 0) + r.durationMinutes;
+        }
+
+        double totalMinutes = 0;
+        List<BarChartRodStackItem> stackItems = [];
+        subjectMinutesMap.forEach((subject, minutes) {
+          stackItems.add(BarChartRodStackItem(
+            totalMinutes,
+            totalMinutes + minutes,
+            getSubjectColor(subject),
+          ));
+          totalMinutes += minutes;
+        });
+
+        barGroups.add(
+          BarChartGroupData(
+            x: 4 - i,
+            barRods: [
+              BarChartRodData(
+                toY: totalMinutes,
+                width: 24, // 週・月は少し太めにする
+                borderRadius: BorderRadius.circular(4),
+                rodStackItems: stackItems,
+                color: Colors.grey.shade300,
+              )
+            ],
+          ),
+        );
+      }
+    } else if (form == 3) {
+      // --- 【月ごと表示】 直近6ヶ月のデータを集計 ---
+      for (int i = 5; i >= 0; i--) {
+        // 過去の月を計算
+        int targetMonth = now.month - i;
+        int targetYear = now.year;
+        while (targetMonth <= 0) {
+          targetMonth += 12;
+          targetYear -= 1;
+        }
+
+        // その月のレコードを抽出
+        final monthRecords = studyTime.where((r) =>
+            r.date.year == targetYear && r.date.month == targetMonth).toList();
+
+        // 教科ごとに今月の合計時間を集計
+        Map<String, double> subjectMinutesMap = {};
+        for (var r in monthRecords) {
+          subjectMinutesMap[r.subject] = (subjectMinutesMap[r.subject] ?? 0) + r.durationMinutes;
+        }
+
+        double totalMinutes = 0;
+        List<BarChartRodStackItem> stackItems = [];
+        subjectMinutesMap.forEach((subject, minutes) {
+          stackItems.add(BarChartRodStackItem(
+            totalMinutes,
+            totalMinutes + minutes,
+            getSubjectColor(subject),
+          ));
+          totalMinutes += minutes;
+        });
+
+        barGroups.add(
+          BarChartGroupData(
+            x: 5 - i,
+            barRods: [
+              BarChartRodData(
+                toY: totalMinutes,
+                width: 32, // 月はさらに太め
+                borderRadius: BorderRadius.circular(4),
+                rodStackItems: stackItems,
+                color: Colors.grey.shade300,
+              )
+            ],
+          ),
+        );
+      }
+    }
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('記録'),
       ),
-      body: Center(
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: form == 3 ? Colors.grey[350] : Colors.white
+                  ),
+                  onPressed: () {setState(() {
+                      form = 3;
+                    });
+                  },
+                  child: const Text('月')
+                ),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: form == 2 ? Colors.grey[350] : Colors.white
+                  ),
+                  onPressed: () {setState(() {
+                      form = 2;
+                    });
+                  },
+                  child: const Text('週')
+                ),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: form == 1 ? Colors.grey[350] : Colors.white
+                  ),
+                  onPressed: () {setState(() {
+                      form = 1;
+                    });
+                  },
+                  child: const Text('日')
+                ),
+              ],
+            ),
+            const SizedBox(height: 30,),
+            SizedBox(
+              height: 300,
+              child: BarChart(
+                BarChartData(
+                  barTouchData: BarTouchData(
+                    enabled: true,
+                    touchTooltipData: BarTouchTooltipData(
+                      getTooltipColor: (group) => Colors.blueGrey,
+                      tooltipBorder: const BorderSide(color: Colors.white, width: 1),
+                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        String dateKey = groupedRecords.keys.toList()[group.x];
+                        List<StudyRecord> dayRecords = groupedRecords[dateKey] ?? [];
+                        double touchY = rod.toY;
 
+                        StringBuffer textBuffer = StringBuffer();
+                        textBuffer.writeln(dateKey);
+                        textBuffer.writeln('—————————————');
+                        for (var record in dayRecords) {
+                          textBuffer.writeln('${record.subject}(${record.material}): ${record.durationMinutes}分');
+                        }
+                        return BarTooltipItem(
+                          textBuffer.toString(),
+                          const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          )
+                        );
+                      },
+                    )
+                  ),
+                  borderData: FlBorderData(show: false),
+                  barGroups: groupedRecords.entries.map((entry) {
+                    int index = groupedRecords.keys.toList().indexOf(entry.key);
+                    List<StudyRecord> dayRecords = entry.value;
+                    Map<String, int> materialTotalMinutes = {};
+                    for (var record in dayRecords) {
+                      String key = record.material;
+                      if (materialTotalMinutes.containsKey(key)) {
+                        materialTotalMinutes[key] = materialTotalMinutes[key]! + record.durationMinutes;
+                      } else {
+                        materialTotalMinutes[key] = record.durationMinutes;
+                      }
+                    }
+
+                    double totalHeight = 0;
+                    List<BarChartRodStackItem> stackItems = [];
+
+                    materialTotalMinutes.forEach((materialName, minutes) {
+                      double duration = minutes.toDouble();
+                      stackItems.add(
+                        BarChartRodStackItem(
+                          totalHeight, 
+                          totalHeight + duration, 
+                          getSubjectColor(materialName)
+                        )
+                      );
+                      totalHeight += duration;
+                    });
+                    
+                    return BarChartGroupData(
+                      x: index,
+                      barRods: [
+                        BarChartRodData(
+                          fromY: 0,
+                          toY: totalHeight,
+                          width: 25,
+                          rodStackItems: stackItems,
+                        )
+                      ]
+                    );
+                  }).toList()
+                )
+              ),
+            )
+          ]
+        )
       )
     );
   }
